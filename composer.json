@@ -14,14 +14,16 @@
 		"stan": "vendor/bin/phpstan analyse --level 7 src"
 	},
 	"require": {
-		"php": "^7.4 || ^8.0",
-		"psr/container": "^1.0",
-		"symfony/event-dispatcher": "^4.4|^5.0",
-		"symfony/messenger": "^5.3",
-		"symfony/console": "^4.4|^5.0",
+		"php": "^8.2",
+		"psr/container": ">=1.0",
+		"symfony/event-dispatcher": ">=4.4",
+		"symfony/messenger": ">=5.3",
+		"symfony/console": ">=4.4",
 		"nette/di": "^3.0.6",
 		"nette/schema": "^1.0.3",
-		"tracy/tracy": "^2.6"
+		"tracy/tracy": "^2.6",
+		"symfony/amqp-messenger": "^7.0",
+		"symfony/redis-messenger": "^7.0"
 	},
 	"require-dev": {
 		"mockery/mockery": "^1.2",
