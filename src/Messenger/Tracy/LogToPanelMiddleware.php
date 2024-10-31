@@ -9,6 +9,8 @@ use Symfony\Component\Messenger\Middleware\MiddlewareInterface;
 use Symfony\Component\Messenger\Middleware\StackInterface;
 use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Tracy\Debugger;
+use Tracy\Dumper;
+use Tracy\Helpers;
 
 use function array_map;
 use function count;
@@ -41,15 +43,13 @@ final class LogToPanelMiddleware implements MiddlewareInterface
         $this->handledMessages[] = new HandledMessage(
             $this->getMessageName($envelope),
             round($time * 1000, 3),
-            Debugger::dump($envelope->getMessage(), true),
+            self::dump($envelope->getMessage()),
             implode(
                 "\n",
                 array_map(
-                    static function (HandledStamp $stamp): string {
-                        return Debugger::dump($stamp->getResult(), true);
-                    },
-                    $result->all(HandledStamp::class)
-                )
+                    fn (HandledStamp $stamp) => $this->dump($stamp->getResult()),
+                    $result->all(HandledStamp::class),
+                ),
             )
         );
 
@@ -74,5 +74,16 @@ final class LogToPanelMiddleware implements MiddlewareInterface
         $nameParts = explode('\\', get_class($envelope->getMessage()));
 
         return $nameParts[count($nameParts) - 1];
+    }
+
+    private function dump(mixed $value): string
+    {
+        return Helpers::capture(static fn () => Dumper::dump($value, [
+            Dumper::DEPTH => Debugger::$maxDepth,
+            Dumper::TRUNCATE => Debugger::$maxLength,
+            Dumper::ITEMS => Debugger::$maxItems,
+            Dumper::DEBUGINFO => true,
+            Dumper::LOCATION => false,
+        ]));
     }
 }
