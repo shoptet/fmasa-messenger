@@ -24,12 +24,15 @@ final class LogToPanelMiddleware implements MiddlewareInterface
 {
     private string $busName;
 
+    private ?bool $enabled;
+
     /** @var HandledMessage[] */
     private array $handledMessages = [];
 
-    public function __construct(string $busName)
+    public function __construct(string $busName, ?bool $enabled = null)
     {
         $this->busName = $busName;
+        $this->enabled = $enabled;
     }
 
     public function handle(Envelope $envelope, StackInterface $stack): Envelope
@@ -37,6 +40,10 @@ final class LogToPanelMiddleware implements MiddlewareInterface
         $time = microtime(true);
 
         $result = $stack->next()->handle($envelope, $stack);
+
+        if (!$this->isEnabled()) {
+            return $result;
+        }
 
         $time = microtime(true) - $time;
 
@@ -76,14 +83,29 @@ final class LogToPanelMiddleware implements MiddlewareInterface
         return $nameParts[count($nameParts) - 1];
     }
 
+    private function isEnabled(): bool
+    {
+        if ($this->enabled === null) {
+            $this->enabled = class_exists(Debugger::class)
+                && Debugger::isEnabled()
+                && Debugger::$productionMode !== true;
+        }
+
+        return $this->enabled;
+    }
+
     private function dump(mixed $value): string
     {
-        return Helpers::capture(static fn () => Dumper::dump($value, [
+        $options = [
             Dumper::DEPTH => Debugger::$maxDepth,
             Dumper::TRUNCATE => Debugger::$maxLength,
             Dumper::ITEMS => Debugger::$maxItems,
             Dumper::DEBUGINFO => true,
             Dumper::LOCATION => false,
-        ]));
+        ];
+
+        return PHP_SAPI === 'cli' || PHP_SAPI === 'phpdbg'
+            ? Dumper::toTerminal($value, $options)
+            : Helpers::capture(static fn () => Dumper::dump($value, $options));
     }
 }
