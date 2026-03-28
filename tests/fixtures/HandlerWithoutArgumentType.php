@@ -6,10 +6,7 @@ namespace Fixtures;
 
 final class HandlerWithoutArgumentType
 {
-    /**
-     * @param mixed $message
-     */
-    public function __invoke($message): void
+    public function __invoke(mixed $message): void
     {
     }
 }

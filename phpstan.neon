@@ -1,4 +1,3 @@
 parameters:
     ignoreErrors:
         - '~Cannot access property (\$buses|\$transports|\$routing|\$serializer|\$failureTransport) on array\|object\.~'
-        - '~Parameter #1 \$callback of function array_map expects \(callable\(array<Symfony\\Component\\Messenger\\Stamp\\StampInterface>\|Symfony\\Component\\Messenger\\Stamp\\StampInterface\): mixed\)\|null~'

@@ -6,12 +6,9 @@
 	"license": "MIT",
 	"scripts": {
 		"cs": "vendor/bin/phpcs",
-		"check": [
-			"vendor/bin/phpunit",
-			"@stan",
-			"@cs"
-		],
-		"stan": "vendor/bin/phpstan analyse --level 7 src"
+		"stan": "vendor/bin/phpstan analyse --level 7 src",
+		"test": "vendor/bin/phpunit",
+		"check": ["@test", "@stan", "@cs"]
 	},
 	"require": {
 		"php": "^8.2",
@@ -29,8 +26,8 @@
 		"mockery/mockery": "^1.2",
 		"phpunit/phpunit": "^9.5",
 		"nette/bootstrap": "^3.0",
-		"phpstan/phpstan": "^1.2.0",
-		"doctrine/coding-standard": "^8.1"
+		"phpstan/phpstan": "^2.1.44",
+		"doctrine/coding-standard": "^9.0"
 	},
 	"authors": [
 		{
@@ -46,7 +43,8 @@
 	"autoload-dev": {
 		"psr-4": {
 			"Fixtures\\": "tests/fixtures"
-		}
+		},
+		"files": ["tests/messenger_legacy_polyfill.php"]
 	},
 	"minimum-stability": "stable",
 	"config": {

@@ -12,6 +12,5 @@ use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
  */
 final class SerializerConfig
 {
-    /** @var string|Statement */
-    public $defaultSerializer = PhpSerializer::class;
+    public Statement|string $defaultSerializer = PhpSerializer::class;
 }

@@ -1,0 +1,8 @@
+messenger:
+    buses:
+        default:
+        other:
+
+services:
+    - Fixtures\HandlerWithAttributes
+    - Fixtures\HandlerWithBusOptionViaAttribute
