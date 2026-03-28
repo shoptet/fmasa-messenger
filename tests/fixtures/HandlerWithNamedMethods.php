@@ -22,10 +22,7 @@ final class HandlerWithNamedMethods
         return $this->result;
     }
 
-    /**
-     * @param mixed $message
-     */
-    public function handleWithoutArgumentType($message): ?string
+    public function handleWithoutArgumentType(mixed $message): ?string
     {
         if (! $message instanceof Message) {
             throw new InvalidArgumentException(sprintf(

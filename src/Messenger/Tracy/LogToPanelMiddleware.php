@@ -13,12 +13,15 @@ use Tracy\Dumper;
 use Tracy\Helpers;
 
 use function array_map;
+use function class_exists;
 use function count;
 use function explode;
 use function get_class;
 use function implode;
 use function microtime;
 use function round;
+
+use const PHP_SAPI;
 
 final class LogToPanelMiddleware implements MiddlewareInterface
 {
@@ -37,11 +40,10 @@ final class LogToPanelMiddleware implements MiddlewareInterface
 
     public function handle(Envelope $envelope, StackInterface $stack): Envelope
     {
-        $time = microtime(true);
-
+        $time   = microtime(true);
         $result = $stack->next()->handle($envelope, $stack);
 
-        if (!$this->isEnabled()) {
+        if (! $this->isEnabled()) {
             return $result;
         }
 
@@ -74,6 +76,14 @@ final class LogToPanelMiddleware implements MiddlewareInterface
     public function getHandledMessages(): array
     {
         return $this->handledMessages;
+    }
+
+    /**
+     * @internal
+     */
+    public function enable(): void
+    {
+        $this->enabled = true;
     }
 
     private function getMessageName(Envelope $envelope): string

@@ -1,0 +1,13 @@
+messenger:
+    buses:
+        default:
+
+services:
+    - factory: Fixtures\HandlerWithAttribute('first result')
+#      tags: [messenger.messageHandler]
+#
+#    - factory: Fixtures\Handler('second result')
+#      tags: [messenger.messageHandler]
+#
+#    - factory: Fixtures\FixedHandler
+#      tags: [messenger.messageHandler]
