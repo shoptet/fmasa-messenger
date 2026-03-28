@@ -33,7 +33,8 @@ use Symfony\Component\Messenger\RoutableMessageBus;
 use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Symfony\Component\Messenger\Stamp\SentStamp;
 use Symfony\Component\Messenger\Stamp\SentToFailureTransportStamp;
-use Symfony\Component\Messenger\Transport\InMemoryTransport;
+use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
+use Symfony\Component\Messenger\Transport\InMemoryTransport as LegacyInMemoryTransport;
 
 use function array_map;
 use function assert;
@@ -149,6 +150,46 @@ final class MessengerExtensionTest extends TestCase
         $this->assertResultsAreSame(
             ['message2 result'],
             $messageBus->dispatch(new Message2())
+        );
+    }
+
+    public function testHandlerWithAttributes(): void
+    {
+        $container = $this->getContainer(__DIR__ . '/handlerWithAttributes.neon');
+
+        $messageBus = $container->getService('messenger.default.bus');
+        assert($messageBus instanceof MessageBusInterface);
+
+        $this->assertResultsAreSame(
+            ['message result'],
+            $messageBus->dispatch(new Message()),
+        );
+        $this->assertResultsAreSame(
+            ['message2 result'],
+            $messageBus->dispatch(new Message2()),
+        );
+        $this->assertResultsAreSame(
+            ['message3 result'],
+            $messageBus->dispatch(new Message3()),
+        );
+    }
+
+    public function testHandlerWithBusOptionViaAttribute(): void
+    {
+        $container = $this->getContainer(__DIR__ . '/handlerWithBusOptionViaAttribute.neon');
+
+        $defaultBus = $container->getService('messenger.default.bus');
+        $otherBus   = $container->getService('messenger.other.bus');
+        assert($defaultBus instanceof MessageBusInterface && $otherBus instanceof MessageBusInterface);
+
+        $this->assertResultsAreSame(
+            ['message result'],
+            $defaultBus->dispatch(new Message())
+        );
+
+        $this->assertResultsAreSame(
+            ['message result', 'message with bus option result'],
+            $otherBus->dispatch(new Message())
         );
     }
 
@@ -295,6 +336,12 @@ final class MessengerExtensionTest extends TestCase
         $otherBus   = $container->getService('messenger.other.bus');
         assert($defaultBus instanceof MessageBusInterface && $otherBus instanceof MessageBusInterface);
 
+        foreach ($container->findByType(LogToPanelMiddleware::class) as $serviceName) {
+            $middleware = $container->getService($serviceName);
+            assert($middleware instanceof LogToPanelMiddleware);
+            $middleware->enable();
+        }
+
         $defaultBus->dispatch(new Message());
         $defaultBus->dispatch(new Message());
 
@@ -314,12 +361,11 @@ final class MessengerExtensionTest extends TestCase
     }
 
     /**
-     * @param mixed    $message
      * @param string[] $transports
      *
      * @dataProvider dataMessagedRoutedToMemoryTransport
      */
-    public function testMessageIsPassedToTransport($message, array $transports): void
+    public function testMessageIsPassedToTransport(mixed $message, array $transports): void
     {
         $container = $this->getContainer(__DIR__ . '/transports.neon');
 
@@ -429,7 +475,7 @@ final class MessengerExtensionTest extends TestCase
         ));
 
         $transport = $container->getService('messenger.transport.' . $failureTransport);
-        assert($transport instanceof InMemoryTransport);
+        assert($transport instanceof InMemoryTransport || $transport instanceof LegacyInMemoryTransport);
 
         $envelope = $transport->getSent()[0] ?? null;
         $this->assertNotNull($envelope);

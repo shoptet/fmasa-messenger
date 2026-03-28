@@ -20,10 +20,8 @@ final class TransportConfig
 
     /**
      * Service/class used as serializer for given transport. When null is passed, default serializer will be used.
-     *
-     * @var string|Statement|null
      */
-    public $serializer = null;
+    public Statement|string|null $serializer = null;
 
     public ?string $failureTransport = null;
 }

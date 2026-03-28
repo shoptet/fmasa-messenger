@@ -11,17 +11,22 @@ use Fmasa\Messenger\Tracy\LogToPanelMiddleware;
 use Fmasa\Messenger\Tracy\MessengerPanel;
 use Fmasa\Messenger\Transport\SendersLocator;
 use Fmasa\Messenger\Transport\TaggedServiceLocator;
+use LogicException;
 use Nette\DI\CompilerExtension;
+use Nette\DI\Definitions\Definition;
 use Nette\DI\Definitions\ServiceDefinition;
 use Nette\DI\Definitions\Statement;
 use Nette\PhpGenerator\ClassType;
 use Nette\Schema\Expect;
 use Nette\Schema\Schema;
+use ReflectionAttribute;
 use ReflectionClass;
 use ReflectionException;
+use ReflectionIntersectionType;
 use ReflectionNamedType;
 use ReflectionUnionType;
 use Symfony\Component\EventDispatcher\EventDispatcher;
+use Symfony\Component\Messenger\Attribute\AsMessageHandler;
 use Symfony\Component\Messenger\Bridge\Amqp\Transport\AmqpTransportFactory;
 use Symfony\Component\Messenger\Bridge\Redis\Transport\RedisTransportFactory;
 use Symfony\Component\Messenger\Command\ConsumeMessagesCommand;
@@ -29,13 +34,15 @@ use Symfony\Component\Messenger\EventListener\DispatchPcntlSignalListener;
 use Symfony\Component\Messenger\EventListener\SendFailedMessageForRetryListener;
 use Symfony\Component\Messenger\EventListener\SendFailedMessageToFailureTransportListener;
 use Symfony\Component\Messenger\EventListener\StopWorkerOnSigtermSignalListener;
+use Symfony\Component\Messenger\Handler\BatchHandlerInterface;
 use Symfony\Component\Messenger\Handler\MessageHandlerInterface;
 use Symfony\Component\Messenger\Handler\MessageSubscriberInterface;
 use Symfony\Component\Messenger\MessageBus;
 use Symfony\Component\Messenger\Middleware\HandleMessageMiddleware;
 use Symfony\Component\Messenger\Middleware\SendMessageMiddleware;
 use Symfony\Component\Messenger\RoutableMessageBus;
-use Symfony\Component\Messenger\Transport\InMemoryTransportFactory;
+use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransportFactory;
+use Symfony\Component\Messenger\Transport\InMemoryTransportFactory as LegacyInMemoryTransportFactory;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 use Symfony\Component\Messenger\Transport\TransportFactory;
 use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
@@ -47,10 +54,15 @@ use function array_merge;
 use function assert;
 use function class_exists;
 use function count;
+use function get_object_vars;
+use function interface_exists;
+use function is_a;
+use function is_array;
 use function is_callable;
 use function is_int;
 use function is_string;
 use function krsort;
+use function sprintf;
 
 class MessengerExtension extends CompilerExtension
 {
@@ -64,12 +76,6 @@ class MessengerExtension extends CompilerExtension
     private const HANDLERS_LOCATOR_SERVICE_NAME = '.handlersLocator';
     private const PANEL_MIDDLEWARE_SERVICE_NAME = '.middleware.panel';
     private const PANEL_SERVICE_NAME            = 'panel';
-
-    private const DEFAULT_FACTORIES = [
-        'amqp' => AmqpTransportFactory::class,
-        'inMemory' => InMemoryTransportFactory::class,
-        'redis' => RedisTransportFactory::class,
-    ];
 
     public function getConfigSchema(): Schema
     {
@@ -121,7 +127,6 @@ class MessengerExtension extends CompilerExtension
 
         foreach ($config->buses as $busName => $busConfig) {
             assert($busConfig instanceof BusConfig);
-
             $handlers = [];
 
             foreach ($this->getHandlerDefinitionsForBus($busName) as $messageName => $handlerDefinitions) {
@@ -135,7 +140,7 @@ class MessengerExtension extends CompilerExtension
                     if (count($handlerDefinitions) > 1) {
                         throw MultipleHandlersFound::fromHandlerClasses(
                             $messageName,
-                            array_map([$builder, 'getDefinition'], array_keys($handlerDefinitions))
+                            array_map($builder->getDefinition(...), array_keys($handlerDefinitions)),
                         );
                     }
                 }
@@ -211,7 +216,7 @@ class MessengerExtension extends CompilerExtension
      */
     private function getSubscribers(): array
     {
-        return [
+        $subscribers = [
             new Statement(DispatchPcntlSignalListener::class),
             new Statement(
                 SendFailedMessageForRetryListener::class,
@@ -224,8 +229,13 @@ class MessengerExtension extends CompilerExtension
                 SendFailedMessageToFailureTransportListener::class,
                 [new Statement(TaggedServiceLocator::class, [self::TAG_FAILURE_TRANSPORT])]
             ),
-            new Statement(StopWorkerOnSigtermSignalListener::class),
         ];
+
+        if (class_exists(StopWorkerOnSigtermSignalListener::class)) {
+            $subscribers[] = new Statement(StopWorkerOnSigtermSignalListener::class);
+        }
+
+        return $subscribers;
     }
 
     private function processConsoleCommands(): void
@@ -254,7 +264,7 @@ class MessengerExtension extends CompilerExtension
         $transportFactory = $builder->addDefinition($this->prefix('transportFactory'))
             ->setFactory(TransportFactory::class);
 
-        foreach (self::DEFAULT_FACTORIES as $name => $factoryClass) {
+        foreach ($this->getDefaultFactories() as $name => $factoryClass) {
             $builder->addDefinition($this->prefix('transportFactory.' . $name))
                 ->setFactory($factoryClass)
                 ->setTags([self::TAG_TRANSPORT_FACTORY => true]);
@@ -307,6 +317,20 @@ class MessengerExtension extends CompilerExtension
         }
     }
 
+    /**
+     * @return array<string, class-string>
+     */
+    private function getDefaultFactories(): array
+    {
+        return [
+            'amqp' => AmqpTransportFactory::class,
+            'inMemory' => class_exists(InMemoryTransportFactory::class)
+                ? InMemoryTransportFactory::class
+                : LegacyInMemoryTransportFactory::class, // @phpstan-ignore class.notFound
+            'redis' => RedisTransportFactory::class,
+        ];
+    }
+
     private function processRouting(): void
     {
         $this->getContainerBuilder()->addDefinition($this->prefix('sendersLocator'))
@@ -314,9 +338,9 @@ class MessengerExtension extends CompilerExtension
                 SendersLocator::class,
                 [
                     array_map(
-                        static function ($oneOrManyTransports): array {
-                                return is_string($oneOrManyTransports) ? [$oneOrManyTransports] : $oneOrManyTransports;
-                        },
+                        static fn ($oneOrManyTransports) => is_string($oneOrManyTransports)
+                            ? [$oneOrManyTransports]
+                            : $oneOrManyTransports,
                         $this->getConfig()->routing
                     ),
                 ]
@@ -333,72 +357,204 @@ class MessengerExtension extends CompilerExtension
         $builder                     = $this->getContainerBuilder();
         $handlerDefinitionsByMessage = [];
 
-        /** @var string[] $serviceNames */
-        $serviceNames = array_keys(
-            array_merge(
-                $builder->findByTag(self::TAG_HANDLER),
-                $builder->findByType(MessageHandlerInterface::class)
-            )
-        );
+        $handlerDefinitionsByMessageAndPriority = $this->mergeHandlerDefinitions(array_map(
+            fn (Definition $serviceDefinition) => $this->getHandlerDefinitionsForService($serviceDefinition, $busName),
+            $builder->getDefinitions(),
+        ));
 
-        foreach ($serviceNames as $serviceName) {
-            $serviceDefinition = $builder->getDefinition($serviceName);
-            $handlerClassName  = $serviceDefinition->getType();
-            $tag               = $serviceDefinition->getTag(self::TAG_HANDLER);
-            $alias             = $tag['alias'] ?? null;
-            assert(class_exists($handlerClassName));
-
-            if ($busName !== ($tag['bus'] ?? $busName)) {
-                continue;
-            }
-
-            $handlerReflection = new ReflectionClass($handlerClassName);
-
-            if (isset($tag['handles'])) {
-                $handles = isset($tag['method']) ? [$tag['handles'] => $tag['method']] : [$tag['handles']];
-            } else {
-                $handles = $this->guessHandledClasses($handlerReflection, $serviceName, $tag['method'] ?? '__invoke');
-            }
-
-            foreach ($handles as $message => $options) {
-                if (is_int($message)) {
-                    $message = (string) $options;
-                    $options = [];
-                }
-
-                if (is_string($options)) {
-                    $options = ['method' => $options];
-                }
-
-                if (isset($options['bus']) && $options['bus'] !== $busName) {
-                    continue;
-                }
-
-                if (! isset($options['from_transport']) && isset($tag['from_transport'])) {
-                    $options['from_transport'] = $tag['from_transport'];
-                }
-
-                $priority = $tag['priority'] ?? $options['priority'] ?? 0;
-                $method   = $options['method'] ?? '__invoke';
-
-                if (! $handlerReflection->hasMethod($method)) {
-                    throw InvalidHandlerService::missingHandlerMethod($serviceName, $handlerClassName, $method);
-                }
-
-                if ($alias !== null) {
-                    $options['alias'] = $alias;
-                }
-
-                $handlerDefinitionsByMessage[(string) $message][$priority][] = new HandlerDefinition($serviceName, $method, $options);
-            }
-        }
-
-        foreach ($handlerDefinitionsByMessage as $message => $handlersByPriority) {
-            krsort($handlersByPriority);
-            $handlerDefinitionsByMessage[$message] = array_merge(...$handlersByPriority);
+        foreach ($handlerDefinitionsByMessageAndPriority as $message => $handlerDefinitionsByPriority) {
+            krsort($handlerDefinitionsByPriority);
+            $handlerDefinitionsByMessage[$message] = array_merge(...$handlerDefinitionsByPriority);
         }
 
         return $handlerDefinitionsByMessage;
+    }
+
+    /**
+     * @return array<string, array<int, HandlerDefinition[]>>
+     */
+    private function getHandlerDefinitionsForService(Definition $definition, string $busName): array
+    {
+        static $asMessageHandlerExists;
+        static $messageHandlerInterfaceExists;
+        static $batchHandlerInterfaceExists;
+        $asMessageHandlerExists        ??= class_exists(AsMessageHandler::class);
+        $messageHandlerInterfaceExists ??= interface_exists(MessageHandlerInterface::class);
+        $batchHandlerInterfaceExists   ??= interface_exists(BatchHandlerInterface::class);
+
+        $handlerClass = $definition->getType();
+
+        if ($handlerClass === null) {
+            return [];
+        }
+
+        assert(class_exists($handlerClass) || interface_exists($handlerClass));
+
+        if ($asMessageHandlerExists) {
+            $handlerReflection = new ReflectionClass($handlerClass);
+            $configs           = $this->extractConfigsFromAttributes($handlerReflection);
+
+            if ($configs !== []) {
+                return $this->mergeHandlerDefinitions(array_map(
+                    fn (array $config) => $this->createHandlerDefinitions(
+                        $config,
+                        $handlerReflection,
+                        $definition->getName(),
+                        $busName,
+                    ),
+                    $configs,
+                ));
+            }
+        }
+
+        $config = $definition->getTag(self::TAG_HANDLER);
+
+        if (
+            $config !== null
+            || ($messageHandlerInterfaceExists && is_a($handlerClass, MessageHandlerInterface::class, true))
+            || ($batchHandlerInterfaceExists && is_a($handlerClass, BatchHandlerInterface::class, true))
+        ) {
+            return $this->createHandlerDefinitions(
+                is_array($config) ? $config : [],
+                new ReflectionClass($handlerClass),
+                $definition->getName(),
+                $busName,
+            );
+        }
+
+        return [];
+    }
+
+    /**
+     * @param array<string, mixed>    $config
+     * @param ReflectionClass<object> $handlerReflection
+     *
+     * @return array<string, array<int, HandlerDefinition[]>>
+     */
+    private function createHandlerDefinitions(
+        array $config,
+        ReflectionClass $handlerReflection,
+        string $serviceName,
+        string $busName,
+    ): array {
+        $bus     = $config['bus'] ?? null;
+        $handles = $config['handles'] ?? null;
+        $method  = $config['method'] ?? null;
+        $handles = $handles !== null
+            ? $method !== null ? [$handles => $method] : [$handles]
+            : $this->guessHandledClasses($handlerReflection, $serviceName, $method ?? '__invoke');
+
+        $handlerDefinitions = [];
+
+        foreach ($handles as $message => $options) {
+            if (is_int($message)) {
+                $message = (string) $options;
+                $options = [];
+            }
+
+            if (is_string($options)) {
+                $options = ['method' => $options];
+            }
+
+            if (($options['bus'] ?? $bus ?? $busName) !== $busName) {
+                continue;
+            }
+
+            $options['from_transport'] ??= $config['from_transport'] ?? null;
+
+            $handlerMethod = $options['method'] ?? '__invoke';
+
+            if (! $handlerReflection->hasMethod($handlerMethod)) {
+                throw InvalidHandlerService::missingHandlerMethod(
+                    $serviceName,
+                    $handlerReflection->name,
+                    $handlerMethod,
+                );
+            }
+
+            $options['alias'] ??= $config['alias'] ?? null;
+
+            $priority = $config['priority'] ?? $options['priority'] ?? 0;
+
+            $handlerDefinitions[$message][$priority][] = new HandlerDefinition(
+                $serviceName,
+                $handlerMethod,
+                $options,
+            );
+        }
+
+        return $handlerDefinitions;
+    }
+
+    /**
+     * @param array<array<string, array<int, HandlerDefinition[]>>> $handlerDefinitionsByMessageAndPriorityList
+     *
+     * @return array<string, array<int, HandlerDefinition[]>>
+     */
+    private function mergeHandlerDefinitions(array $handlerDefinitionsByMessageAndPriorityList): array
+    {
+        $mergedHandlerDefinitions = [];
+
+        foreach ($handlerDefinitionsByMessageAndPriorityList as $handlerDefinitionsByMessageAndPriority) {
+            foreach ($handlerDefinitionsByMessageAndPriority as $message => $handlerDefinitionsByPriority) {
+                foreach ($handlerDefinitionsByPriority as $priority => $handlerDefinitions) {
+                    $mergedHandlerDefinitions[$message][$priority] = array_merge(
+                        $mergedHandlerDefinitions[$message][$priority] ?? [],
+                        $handlerDefinitions,
+                    );
+                }
+            }
+        }
+
+        return $mergedHandlerDefinitions;
+    }
+
+    /**
+     * @param ReflectionClass<object> $handlerReflection
+     *
+     * @return array<string, mixed>[]
+     */
+    private function extractConfigsFromAttributes(ReflectionClass $handlerReflection): array
+    {
+        $configs = array_map(
+            $this->extractConfigFromAttribute(...),
+            $handlerReflection->getAttributes(AsMessageHandler::class),
+        );
+
+        foreach ($handlerReflection->getMethods() as $reflectionMethod) {
+            foreach ($reflectionMethod->getAttributes(AsMessageHandler::class) as $reflectionAttribute) {
+                $config = $this->extractConfigFromAttribute($reflectionAttribute);
+
+                if (isset($config['method'])) {
+                    throw new LogicException(sprintf(
+                        'AsMessageHandler attribute cannot declare a method on "%s::%s()".',
+                        $handlerReflection,
+                        $reflectionMethod->getName(),
+                    ));
+                }
+
+                $config['method'] = $reflectionMethod->getName();
+
+                $configs[] = $config;
+            }
+        }
+
+        return $configs;
+    }
+
+    /**
+     * @param ReflectionAttribute<AsMessageHandler> $attributeReflection
+     *
+     * @return array<string, mixed>
+     */
+    private function extractConfigFromAttribute(ReflectionAttribute $attributeReflection): array
+    {
+        $config = get_object_vars($attributeReflection->newInstance());
+
+        $config['from_transport'] = $config['fromTransport'] ?? null;
+        unset($config['fromTransport']);
+
+        return $config;
     }
 
     /**
@@ -411,8 +567,10 @@ class MessengerExtension extends CompilerExtension
     private function guessHandledClasses(ReflectionClass $handlerReflection, string $serviceName, string $methodName): iterable
     {
         $handlerClassName = $handlerReflection->getName();
+        static $messageSubscriberExists;
+        $messageSubscriberExists ??= interface_exists(MessageSubscriberInterface::class);
 
-        if ($handlerReflection->implementsInterface(MessageSubscriberInterface::class)) {
+        if ($messageSubscriberExists && $handlerReflection->implementsInterface(MessageSubscriberInterface::class)) {
             $getHandledMessages = [$handlerClassName, 'getHandledMessages'];
 
             if (is_callable($getHandledMessages)) {
@@ -433,16 +591,23 @@ class MessengerExtension extends CompilerExtension
         $parameter     = $method->getParameters()[0];
         $parameterName = $parameter->getName();
         $type          = $parameter->getType();
-        assert($type instanceof ReflectionNamedType || $type instanceof ReflectionUnionType || $type === null);
 
         if ($type === null) {
             throw InvalidHandlerService::missingArgumentType($serviceName, $handlerClassName, $methodName, $parameterName);
+        }
+
+        if ($type instanceof ReflectionIntersectionType) {
+            throw InvalidHandlerService::invalidArgumentType($serviceName, $handlerClassName, $methodName, $parameterName, $type);
         }
 
         if ($type instanceof ReflectionUnionType) {
             $types        = [];
             $invalidTypes = [];
             foreach ($type->getTypes() as $type) {
+                if ($type instanceof ReflectionIntersectionType) {
+                    throw InvalidHandlerService::invalidArgumentType($serviceName, $handlerClassName, $methodName, $parameterName, $type);
+                }
+
                 if (! $type->isBuiltin()) {
                     $types[] = (string) $type;
                 } else {
@@ -456,6 +621,8 @@ class MessengerExtension extends CompilerExtension
 
             throw InvalidHandlerService::invalidArgumentUnionType($serviceName, $handlerClassName, $methodName, $parameterName, $invalidTypes);
         }
+
+        assert($type instanceof ReflectionNamedType);
 
         if ($type->isBuiltin()) {
             throw InvalidHandlerService::invalidArgumentType($serviceName, $handlerClassName, $methodName, $parameterName, $type);
