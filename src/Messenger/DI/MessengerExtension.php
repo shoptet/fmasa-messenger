@@ -51,6 +51,7 @@ use function array_fill_keys;
 use function array_keys;
 use function array_map;
 use function array_merge;
+use function array_values;
 use function assert;
 use function class_exists;
 use function count;
@@ -131,7 +132,7 @@ class MessengerExtension extends CompilerExtension
 
             foreach ($this->getHandlerDefinitionsForBus($busName) as $messageName => $handlerDefinitions) {
                 foreach ($handlerDefinitions as $handlerDefinition) {
-                    $handlers[$messageName][$handlerDefinition->serviceName] = $handlerDefinition;
+                    $handlers[$messageName][$handlerDefinition->serviceName . '::' . $handlerDefinition->methodName] = $handlerDefinition;
                 }
             }
 
@@ -140,7 +141,13 @@ class MessengerExtension extends CompilerExtension
                     if (count($handlerDefinitions) > 1) {
                         throw MultipleHandlersFound::fromHandlerClasses(
                             $messageName,
-                            array_map($builder->getDefinition(...), array_keys($handlerDefinitions)),
+                            array_map(
+                                static fn (HandlerDefinition $handlerDefinition) => [
+                                    $builder->getDefinition($handlerDefinition->serviceName),
+                                    $handlerDefinition->methodName,
+                                ],
+                                array_values($handlerDefinitions),
+                            ),
                         );
                     }
                 }
