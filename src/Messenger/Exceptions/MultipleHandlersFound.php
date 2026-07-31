@@ -14,7 +14,7 @@ use function sprintf;
 final class MultipleHandlersFound extends Exception
 {
     /**
-     * @param Definition[] $handlers
+     * @param array<array{0: Definition, 1: string}> $handlers
      */
     public static function fromHandlerClasses(string $messageName, array $handlers): self
     {
@@ -24,8 +24,10 @@ final class MultipleHandlersFound extends Exception
             implode(
                 ', ',
                 array_map(
-                    static function (Definition $definition): string {
-                        return sprintf('%s (%s)', $definition->getName(), $definition->getType());
+                    static function (array $handler): string {
+                        [$definition, $methodName] = $handler;
+
+                        return sprintf('%s::%s (%s)', $definition->getName(), $methodName, $definition->getType());
                     },
                     $handlers
                 )

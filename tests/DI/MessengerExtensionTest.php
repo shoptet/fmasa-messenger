@@ -96,6 +96,14 @@ final class MessengerExtensionTest extends TestCase
         $this->getContainer(__DIR__ . '/singleHandlerPerMessage.neon');
     }
 
+    public function testExceptionIsThrownIfHandlerClassHasMultipleMethodsForSameMessageWhenSingleHandlerPerMessageIsTrue(): void
+    {
+        $this->expectException(MultipleHandlersFound::class);
+        $this->expectExceptionMessageMatches('~::first \(Fixtures\\\\HandlerWithMultipleMethodsForSameMessage\).*::second \(Fixtures\\\\HandlerWithMultipleMethodsForSameMessage\)~');
+
+        $this->getContainer(__DIR__ . '/handlerWithMultipleMethodsForSameMessage.singleHandlerPerMessage.neon');
+    }
+
     /**
      * @param string[] $expectedResults
      *
@@ -268,6 +276,7 @@ final class MessengerExtensionTest extends TestCase
             [__DIR__ . '/multipleHandlersWithSameAlias.neon', ['first result', 'fixed result']],
             [__DIR__ . '/multipleHandlersWithHandlesAndMethod.neon', ['result from handleWithArgumentType()', 'result from handleWithoutArgumentType()']],
             [__DIR__ . '/multipleHandlersWithPriority.neon', ['result with priority +10', 'result with the default priority', 'result with priority -10']],
+            [__DIR__ . '/handlerWithMultipleMethodsForSameMessage.neon', ['first result', 'second result']],
         ];
     }
 

@@ -1,0 +1,6 @@
+messenger:
+    buses:
+        default:
+
+services:
+    - Fixtures\HandlerWithMultipleMethodsForSameMessage
